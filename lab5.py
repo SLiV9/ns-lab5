@@ -1,8 +1,9 @@
 ## Netwerken en Systeembeveiliging Lab 5 - Distributed Sensor Network
-## NAME:
-## STUDENT ID:
+## NAME: Sander in 't Veld
+## STUDENT ID: 10277935
 import sys
 import struct
+import select
 from socket import *
 from random import randint
 from gui import MainWindow
@@ -55,8 +56,47 @@ def main(mcast_addr,
 
 	# -- This is the event loop. --
 	while window.update():
-		pass
-
+		line = window.getline()
+		if (line):
+			window.writeln("> " + line);
+			
+			#switch line
+			if (line == "ping"):
+				msg = message_encode(MSG_PING, 0, sensor_pos, sensor_pos)
+				peer.sendto(msg, mcast_addr)
+			elif (line == "list"):
+				window.writeln("(not yet implemented)")
+			elif (line == "move"):
+				sensor_pos = random_position(grid_size)
+				window.writeln( 'my new position is (%s, %s)' % sensor_pos )
+			elif (line == "value"):
+				window.writeln("(not yet implemented)")
+			elif (line == "echo"):
+				window.writeln("(not yet implemented)")
+			elif (line == "size"):
+				window.writeln("(not yet implemented)")
+			elif (line == "sum"):
+				window.writeln("(not yet implemented)")
+			elif (line == "max"):
+				window.writeln("(not yet implemented)")
+			elif (line == "min"):
+				window.writeln("(not yet implemented)")
+			else:
+				window.writeln("{ command not recognised }")
+			#end switch line
+		#end if line
+		
+		rrdy, wrdy, err = select.select([mcast], [], [], 0)
+		for r in rrdy:
+			(msg, addr) = r.recvfrom(256)
+			if (len(msg) > 0):
+				content = message_decode(msg)
+				window.writeln("< " + str(addr) + ": " + str(content))
+			#end if len
+		#end for r
+		
+	#end while update
+	return
 
 # -- program entry point --
 if __name__ == '__main__':
