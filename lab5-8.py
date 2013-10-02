@@ -62,18 +62,19 @@ def main(mcast_addr,
 	window.writeln( 'my position is (%s, %s)' % sensor_pos )
 	window.writeln( 'my sensor value is %s' % sensor_val )
 	
-	# Periodic pinging.
+	# Periodic pinging. A value of -1 causes an immediate ping event.
+	# When entering the group, a first ping is sent.
 	lastpingtime = -1
 	
 	# The set of neighbours; (position, address).
 	neighbours = set()
 	
-	# Echo sequence number.
+	# The echo sequence number.
 	echoseq = -1;
 	
 	# The dictionary of fathers of currently active echo's; (position, address).
 	father = {}
-	# The dictionary of sets of neighbours of currently active echo's.
+	# The dictionary of sets of pending neighbours of currently active echo's.
 	echo = {}
 	# The dictionary of operations of currently active echo's.
 	echoop = {}
@@ -83,14 +84,23 @@ def main(mcast_addr,
 	# -- This is the event loop. --
 	while window.update():
 		line = window.getline()
-			
+		
+		# Our event loop will consist of 5 steps.
+		# 1: Interpret the command line input (if any).
+		# 2: If a ping event should occur, ping.
+		# 3: If an echo event should occur, echo.
+		# 4: If one or more messages are received, handle them.
+		# 5: If echo's have finished, show or forward their results.
+		
+		# The operation of a new echo. If the value is nonnegative, an echo occurs.
 		newechoop = -1
 		
 		if (line):
-			window.writeln("> " + line)
+			#debug: window.writeln("> " + line)
 			
 			#switch line
 			if (line == "ping"):
+				# Cause a ping event immediately.
 				lastpingtime = -1
 			elif (line == "list"):
 				window.writeln("Neighbours:")
@@ -119,6 +129,10 @@ def main(mcast_addr,
 			#end switch line
 		#end if line
 		
+		# If lastpingtime has a negative value, a ping occurs.
+		# Otherwise, a ping occurs if periodic pinging is on and ping_period
+		# seconds have past since the last ping.
+		# Any ping sets the timer back to ping_period seconds.
 		if ((lastpingtime < 0) or (ping_period > 0 and \
 						(time.time() >= lastpingtime + ping_period))):
 			neighbours.clear()
@@ -127,6 +141,8 @@ def main(mcast_addr,
 			lastpingtime = time.time()
 		#end if ping
 		
+		# If newechoop has a nonnegative value, a new echo wave is sent.
+		# echo[eid] is the set of all neighbours that haven't responded yet.
 		if (newechoop >= 0):
 			echoseq += 1;
 			eid = (sensor_pos, echoseq)
@@ -140,6 +156,7 @@ def main(mcast_addr,
 			#end for neighbours
 		#end if echoop
 		
+		# Read from available sockets.
 		rrdy, wrdy, err = select.select([mcast, peer], [], [], 0)
 		for r in rrdy:
 			(msg, addr) = r.recvfrom(message_length)
@@ -147,18 +164,27 @@ def main(mcast_addr,
 			if (len(msg) > 0):
 				content = message_decode(msg)
 				tp, seq, initiator, sender, op, payload = content
+				
+				# Take actions depending on the message type (tp).
+				
 				if (tp == MSG_PING):
+					# Respond to pings with a pong with your position.
+					# Don't respond to your own pings.
 					if (sender != sensor_pos):
-						resp = message_encode(MSG_PONG, 0, sensor_pos, sensor_pos)
+						resp = message_encode(MSG_PONG, 0, initiator, sensor_pos)
 						peer.sendto(resp, addr)
 					#end if notself
+					
 				elif (tp == MSG_PONG):
-					if (is_in_range(sensor_pos, sensor_range, initiator)):
-						neighbours.add((initiator, addr))
+					if (is_in_range(sensor_pos, sensor_range, sender)):
+						neighbours.add((sender, addr))
 					#end if inrange
+					
 				elif (tp == MSG_ECHO):
 					eid = (initiator, seq)
 					if (eid not in echo):
+						# If this echo is new, make a new (sub)echo.
+						# echo[eid] is the set of neighbours that haven't responded yet.
 						echo[eid] = neighbours.copy()
 						echoop[eid] = op
 						echoload[eid] = []
@@ -170,8 +196,14 @@ def main(mcast_addr,
 								peer.sendto(frw, naddr)
 							#end if sender
 						#end for echo neighbours
+						
+						# We're not waiting for the father to respond, so remove it.
 						echo[eid].remove(father[eid])
+						
 					else:
+						# If you already received this echo, respond with empty payload
+						# and set operation to OP_NOOP, to prevent the payload from being
+						# registered as value 0.
 						frw = message_encode(MSG_ECHO_REPLY, seq, initiator, sensor_pos, \
 																	OP_NOOP)
 						for (npos, naddr) in neighbours:
@@ -180,6 +212,7 @@ def main(mcast_addr,
 							#end if sender
 						#end for neighbours
 					#end if new echo
+					
 				elif (tp == MSG_ECHO_REPLY):
 					eid = (initiator, seq)
 					if (eid in echo):
@@ -188,11 +221,18 @@ def main(mcast_addr,
 								gotfrom = (npos, naddr)
 							#end if sender
 						#end for echo neighbours
+						
+						# Add the payload to the echoload list. If the echo operation is a
+						# real operation, discard any payloads that arrive with operation
+						# OP_NOOP; these are just acknowledgements.
 						if (op == echoop[eid]):
 							echoload[eid].append(payload)
 						#end if op match
+						
+						# gotfrom has responded; remove it from the echo's pending set.
 						echo[eid].remove(gotfrom)
 					#end if echo exists
+					
 				else:
 					window.writeln("{ unknown message type " + str(tp) + " }")
 				#end switch tp
@@ -200,9 +240,15 @@ def main(mcast_addr,
 			#end if len
 		#end for r
 		
+		# We shall check if any (sub)echo's are finished, i.e. all neighbours that
+		# should have responded, have responded. If so, echo[eid] will be empty.
 		finished = set()
 		for (eid, pending) in echo.iteritems():
 			if (len(pending) == 0):
+				finished.add(eid)
+			
+				# If the operation is a simple count, add a 1 to the list.
+				# If the operation manages sensor values, add your own sensor value.
 				op = echoop[eid]
 				if (op == OP_NOOP or op == OP_SIZE):
 					echoload[eid].append(1)
@@ -210,38 +256,51 @@ def main(mcast_addr,
 					echoload[eid].append(sensor_val)
 				#end switch op
 				
+				# If the operation is a function on payloads, calculate the result.
+				# If the operation is a basic echo, ignore the payloads; the fact that
+				# the echo completes is enough information.
 				if (op == OP_SIZE or op == OP_SUM):
-					load = sum(echoload[eid])
+					result = sum(echoload[eid])
 				elif (op == OP_MIN):
-					load = min(echoload[eid])
+					result = min(echoload[eid])
 				elif (op == OP_MAX):
-					load = max(echoload[eid])
+					result = max(echoload[eid])
 				else:
-					load = 0
+					result = 1
 				#end switch op
 				
-				finished.add(eid)
 				(fpos, faddr) = father[eid]
+				# If I am the initiator, faddr will be set to None.
+				# Otherwise, faddr will be the address of the father.
+				
 				if (faddr is None):
+					# If I am the initiator, display the results.
 					if (op == OP_SIZE):
-						window.writeln("Cluster size: " + str(load))
+						window.writeln("Cluster size: " + str(result))
 					elif (op == OP_SUM):
-						window.writeln("Sum of sensor values in cluster: " + str(load))
+						window.writeln("Sum of sensor values in cluster: " \
+															+ str(result))
 					elif (op == OP_MIN):
-						window.writeln("Minimum of sensor values in cluster: " + str(load))
+						window.writeln("Minimum of sensor values in cluster: " \
+															+ str(result))
 					elif (op == OP_MAX):
-						window.writeln("Maximum of sensor values in cluster: " + str(load))
+						window.writeln("Maximum of sensor values in cluster: " \
+															+ str(result))
 					else:
 						window.writeln("Echo complete.")
 					#end switch op
+					
 				else:
+					# If I am not the father, forward the subresult to the father.
 					(initiator, seq) = eid
 					msg = message_encode(MSG_ECHO_REPLY, seq, initiator, sensor_pos, \
-															op, load) 
+															op, result)
 					peer.sendto(msg, faddr)
 				#end if self father
 			#end if echo empty
 		#end for echos
+		
+		# Remove finished echo's.
 		for eid in finished:
 			del echo[eid]
 			del father[eid]
