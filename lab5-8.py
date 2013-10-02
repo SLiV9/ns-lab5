@@ -188,17 +188,20 @@ def main(mcast_addr,
 						echo[eid] = neighbours.copy()
 						echoop[eid] = op
 						echoload[eid] = []
+						father[eid] = (None, None)
 						frw = message_encode(MSG_ECHO, seq, initiator, sensor_pos, op) 
 						for (npos, naddr) in echo[eid]:
 							if (npos == sender):
+								# If the sender is a neighbour*, make it the father.
+								# (* This is usually true, but the neighbour list may be old.)
 								father[eid] = (npos, naddr)
 							else:
 								peer.sendto(frw, naddr)
 							#end if sender
 						#end for echo neighbours
 						
-						# We're not waiting for the father to respond, so remove it.
-						echo[eid].remove(father[eid])
+						# We're not waiting for the father to respond, so discard it.
+						echo[eid].discard(father[eid])
 						
 					else:
 						# If you already received this echo, respond with empty payload
@@ -230,7 +233,7 @@ def main(mcast_addr,
 						#end if op match
 						
 						# gotfrom has responded; remove it from the echo's pending set.
-						echo[eid].remove(gotfrom)
+						echo[eid].discard(gotfrom)
 					#end if echo exists
 					
 				else:
@@ -271,9 +274,12 @@ def main(mcast_addr,
 				
 				(fpos, faddr) = father[eid]
 				# If I am the initiator, faddr will be set to None.
+				# In the case that I have moved during an echo, discard the results.
+				# In the rare case that 'neighbours' was outdated when a father was set,
+				# the father might be (None, None) instead; discard the results.
 				# Otherwise, faddr will be the address of the father.
 				
-				if (faddr is None):
+				if (fpos == sensor_pos and faddr is None):
 					# If I am the initiator, display the results.
 					if (op == OP_SIZE):
 						window.writeln("Cluster size: " + str(result))
@@ -290,7 +296,7 @@ def main(mcast_addr,
 						window.writeln("Echo complete.")
 					#end switch op
 					
-				else:
+				elif (fpos is not None and faddr is not None):
 					# If I am not the father, forward the subresult to the father.
 					(initiator, seq) = eid
 					msg = message_encode(MSG_ECHO_REPLY, seq, initiator, sensor_pos, \
