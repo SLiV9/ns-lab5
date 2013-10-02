@@ -15,6 +15,14 @@ def random_position(n):
 	x = randint(0, n)
 	y = randint(0, n)
 	return (x, y)
+	
+# Returns true if pos is in range of origin.
+def is_in_range(origin, ran, pos):
+	ox, oy = origin
+	px, py = pos
+	dx = ox - px
+	dy = oy - py
+	return (dx * dx + dy * dy <= ran * ran)
 
 
 def main(mcast_addr,
@@ -53,6 +61,9 @@ def main(mcast_addr,
 	window.writeln( 'my address is %s:%s' % peer.getsockname() )
 	window.writeln( 'my position is (%s, %s)' % sensor_pos )
 	window.writeln( 'my sensor value is %s' % sensor_val )
+	
+	# The list of neighbours.
+	neighbours = []
 
 	# -- This is the event loop. --
 	while window.update():
@@ -62,6 +73,7 @@ def main(mcast_addr,
 			
 			#switch line
 			if (line == "ping"):
+				neighbours = []
 				msg = message_encode(MSG_PING, 0, sensor_pos, sensor_pos)
 				peer.sendto(msg, mcast_addr)
 			elif (line == "list"):
@@ -86,11 +98,29 @@ def main(mcast_addr,
 			#end switch line
 		#end if line
 		
-		rrdy, wrdy, err = select.select([mcast], [], [], 0)
+		rrdy, wrdy, err = select.select([mcast, peer], [], [], 0)
 		for r in rrdy:
 			(msg, addr) = r.recvfrom(256)
 			if (len(msg) > 0):
 				content = message_decode(msg)
+				tp, seq, initiator, sender, op, payload = content
+				if (tp == MSG_PING):
+					if (initiator != sensor_pos):
+						resp = message_encode(MSG_PONG, 0, sensor_pos, sensor_pos)
+						peer.sendto(resp, addr)
+					#end if notself
+				elif (tp == MSG_PONG):
+					if (is_in_range(sensor_pos, sensor_range, initiator)):
+						neighbours.add((initiator, addr))
+					#end if inrange
+					pass
+				elif (tp == MSG_ECHO):
+					pass
+				elif (tp == MSG_ECHO_REPLY):
+					pass
+				else:
+					window.writeln("{ unknown message type " + str(tp) + " }")
+				#end switch tp
 				window.writeln("< " + str(addr) + ": " + str(content))
 			#end if len
 		#end for r
