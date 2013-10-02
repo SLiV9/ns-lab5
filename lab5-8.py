@@ -58,9 +58,9 @@ def main(mcast_addr,
 
 	# -- make the gui --
 	window = MainWindow()
-	window.writeln( 'my address is %s:%s' % peer.getsockname() )
-	window.writeln( 'my position is (%s, %s)' % sensor_pos )
-	window.writeln( 'my sensor value is %s' % sensor_val )
+	window.writeln("My address is %s:%s" % peer.getsockname())
+	window.writeln("My position is (%s, %s)" % sensor_pos)
+	window.writeln("My sensor value is %s" % sensor_val)
 	
 	# Periodic pinging. A value of -1 causes an immediate ping event.
 	# When entering the group, a first ping is sent.
@@ -110,10 +110,10 @@ def main(mcast_addr,
 				window.writeln("\t(end of list)")
 			elif (line == "move"):
 				sensor_pos = random_position(grid_size)
-				window.writeln( 'my new position is (%s, %s)' % sensor_pos )
+				window.writeln("My new position is (%s, %s)" % sensor_pos)
 			elif (line == "value"):
 				sensor_val = randint(0, 100)
-				window.writeln( 'my sensor value is %s' % sensor_val )
+				window.writeln("My sensor value is %s" % sensor_val)
 			elif (line == "echo"):
 				newechoop = OP_NOOP
 			elif (line == "size"):
@@ -176,7 +176,14 @@ def main(mcast_addr,
 					#end if notself
 					
 				elif (tp == MSG_PONG):
-					if (is_in_range(sensor_pos, sensor_range, sender)):
+					if (sender == sensor_pos):
+						# In the rare case of a collision, move.
+						sensor_pos = random_position(grid_size)
+						window.writeln("{ collision detected }")
+						window.writeln("My new position is (%s, %s)" % sensor_pos)
+					
+					elif (is_in_range(sensor_pos, sensor_range, sender)):
+						# If the other node is in range, add it as a neighbour.
 						neighbours.add((sender, addr))
 					#end if inrange
 					
@@ -237,9 +244,10 @@ def main(mcast_addr,
 					#end if echo exists
 					
 				else:
-					window.writeln("{ unknown message type " + str(tp) + " }")
+					window.writeln("{ unknown message type " + str(tp) + " received }")
 				#end switch tp
-				window.writeln("< " + str(addr) + ": " + str(content))
+				
+				#debug: window.writeln("< " + str(addr) + ": " + str(content))
 			#end if len
 		#end for r
 		
