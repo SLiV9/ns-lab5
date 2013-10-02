@@ -11,9 +11,6 @@ from gui import MainWindow
 from sensor import *
 from sets import Set
 
-# A macro for getting the current time in seconds.
-current_time = lambda: int(round(time.time()))
-
 # Get random position in NxN grid.
 def random_position(n):
 	x = randint(0, n)
@@ -67,7 +64,7 @@ def main(mcast_addr,
 	window.writeln( 'my sensor value is %s' % sensor_val )
 	
 	# Periodic pinging.
-	lastpingtime = current_time()
+	lastpingtime = -1
 	
 	# The list of neighbours.
 	neighbours = Set()
@@ -108,12 +105,12 @@ def main(mcast_addr,
 			#end switch line
 		#end if line
 		
-		if (ping_period > 0 and ((lastpingtime < 0) or \
-		(current_time() > lastpingtime + ping_period))):
+		if ((lastpingtime < 0) or (ping_period > 0 and \
+		(time.time() >= lastpingtime + ping_period))):
 			neighbours.clear()
 			msg = message_encode(MSG_PING, 0, sensor_pos, sensor_pos)
 			peer.sendto(msg, mcast_addr)
-			lastpingtime = current_time
+			lastpingtime = time.time()
 		#end if ping
 		
 		rrdy, wrdy, err = select.select([mcast, peer], [], [], 0)
