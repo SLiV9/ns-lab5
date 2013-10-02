@@ -77,12 +77,17 @@ def main(mcast_addr,
 				msg = message_encode(MSG_PING, 0, sensor_pos, sensor_pos)
 				peer.sendto(msg, mcast_addr)
 			elif (line == "list"):
-				window.writeln("(not yet implemented)")
+				window.writeln("Neighbours:")
+				for (npos, naddr) in neighbours:
+					window.writeln("\t- neighbour at " + str(npos) + " from " + str(addr))
+				#end for neighbours
+				window.writeln("\t(end of list)")
 			elif (line == "move"):
 				sensor_pos = random_position(grid_size)
 				window.writeln( 'my new position is (%s, %s)' % sensor_pos )
 			elif (line == "value"):
-				window.writeln("(not yet implemented)")
+				sensor_val = randint(0, 100)
+				window.writeln( 'my sensor value is %s' % sensor_val )
 			elif (line == "echo"):
 				window.writeln("(not yet implemented)")
 			elif (line == "size"):
@@ -100,7 +105,7 @@ def main(mcast_addr,
 		
 		rrdy, wrdy, err = select.select([mcast, peer], [], [], 0)
 		for r in rrdy:
-			(msg, addr) = r.recvfrom(256)
+			(msg, addr) = r.recvfrom(message_length)
 			if (len(msg) > 0):
 				content = message_decode(msg)
 				tp, seq, initiator, sender, op, payload = content
@@ -113,7 +118,6 @@ def main(mcast_addr,
 					if (is_in_range(sensor_pos, sensor_range, initiator)):
 						neighbours.add((initiator, addr))
 					#end if inrange
-					pass
 				elif (tp == MSG_ECHO):
 					pass
 				elif (tp == MSG_ECHO_REPLY):
