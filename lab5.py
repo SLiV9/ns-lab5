@@ -4,11 +4,15 @@
 import sys
 import struct
 import select
+import time
 from socket import *
 from random import randint
 from gui import MainWindow
 from sensor import *
+from sets import Set
 
+# A macro for getting the current time in seconds.
+current_time = lambda: int(round(time.time()))
 
 # Get random position in NxN grid.
 def random_position(n):
@@ -62,8 +66,11 @@ def main(mcast_addr,
 	window.writeln( 'my position is (%s, %s)' % sensor_pos )
 	window.writeln( 'my sensor value is %s' % sensor_val )
 	
+	# Periodic pinging.
+	lastpingtime = current_time()
+	
 	# The list of neighbours.
-	neighbours = []
+	neighbours = Set()
 
 	# -- This is the event loop. --
 	while window.update():
@@ -73,9 +80,7 @@ def main(mcast_addr,
 			
 			#switch line
 			if (line == "ping"):
-				neighbours = []
-				msg = message_encode(MSG_PING, 0, sensor_pos, sensor_pos)
-				peer.sendto(msg, mcast_addr)
+				lastpingtime = -1
 			elif (line == "list"):
 				window.writeln("Neighbours:")
 				for (npos, naddr) in neighbours:
@@ -102,6 +107,14 @@ def main(mcast_addr,
 				window.writeln("{ command not recognised }")
 			#end switch line
 		#end if line
+		
+		if (ping_period > 0 and ((lastpingtime < 0) or \
+		(current_time() > lastpingtime + ping_period))):
+			neighbours.clear()
+			msg = message_encode(MSG_PING, 0, sensor_pos, sensor_pos)
+			peer.sendto(msg, mcast_addr)
+			lastpingtime = current_time
+		#end if ping
 		
 		rrdy, wrdy, err = select.select([mcast, peer], [], [], 0)
 		for r in rrdy:
