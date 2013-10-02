@@ -75,12 +75,19 @@ def main(mcast_addr,
 	father = {}
 	# The dictionary of sets of neighbours of currently active echo's.
 	echo = {}
+	# The dictionary of operations of currently active echo's.
+	echoop = {}
+	# The dictionary of lists of loads of currently active echo's.
+	echoload = {}
 
 	# -- This is the event loop. --
 	while window.update():
 		line = window.getline()
+			
+		newechoop = -1
+		
 		if (line):
-			window.writeln("> " + line);
+			window.writeln("> " + line)
 			
 			#switch line
 			if (line == "ping"):
@@ -98,33 +105,40 @@ def main(mcast_addr,
 				sensor_val = randint(0, 100)
 				window.writeln( 'my sensor value is %s' % sensor_val )
 			elif (line == "echo"):
-				echoseq += 1;
-				eid = (sensor_pos, echoseq)
-				echo[eid] = neighbours.copy()
-				msg = message_encode(MSG_ECHO, echoseq, sensor_pos, sensor_pos, OP_NOOP)
-				for (npos, naddr) in neighbours:
-					peer.sendto(msg, naddr)
-				#end for neighbours
+				newechoop = OP_NOOP
 			elif (line == "size"):
-				window.writeln("(not yet implemented)")
+				newechoop = OP_SIZE
 			elif (line == "sum"):
-				window.writeln("(not yet implemented)")
+				newechoop = OP_SUM
 			elif (line == "max"):
-				window.writeln("(not yet implemented)")
+				newechoop = OP_MAX
 			elif (line == "min"):
-				window.writeln("(not yet implemented)")
+				newechoop = OP_MIN
 			else:
 				window.writeln("{ command not recognised }")
 			#end switch line
 		#end if line
 		
 		if ((lastpingtime < 0) or (ping_period > 0 and \
-		(time.time() >= lastpingtime + ping_period))):
+						(time.time() >= lastpingtime + ping_period))):
 			neighbours.clear()
 			msg = message_encode(MSG_PING, 0, sensor_pos, sensor_pos)
 			peer.sendto(msg, mcast_addr)
 			lastpingtime = time.time()
 		#end if ping
+		
+		if (newechoop >= 0):
+			echoseq += 1;
+			eid = (sensor_pos, echoseq)
+			echo[eid] = neighbours.copy()
+			father[eid] = (sensor_pos, None)
+			echoop[eid] = newechoop
+			echoload[eid] = []
+			msg = message_encode(MSG_ECHO, echoseq, sensor_pos, sensor_pos, newechoop)
+			for (npos, naddr) in neighbours:
+				peer.sendto(msg, naddr)
+			#end for neighbours
+		#end if echoop
 		
 		rrdy, wrdy, err = select.select([mcast, peer], [], [], 0)
 		for r in rrdy:
@@ -134,7 +148,7 @@ def main(mcast_addr,
 				content = message_decode(msg)
 				tp, seq, initiator, sender, op, payload = content
 				if (tp == MSG_PING):
-					if (initiator != sensor_pos):
+					if (sender != sensor_pos):
 						resp = message_encode(MSG_PONG, 0, sensor_pos, sensor_pos)
 						peer.sendto(resp, addr)
 					#end if notself
@@ -146,8 +160,9 @@ def main(mcast_addr,
 					eid = (initiator, seq)
 					if (eid not in echo):
 						echo[eid] = neighbours.copy()
-						frw = message_encode(MSG_ECHO, seq, initiator, sensor_pos, \
-																	op, payload) 
+						echoop[eid] = op
+						echoload[eid] = []
+						frw = message_encode(MSG_ECHO, seq, initiator, sensor_pos, op) 
 						for (npos, naddr) in echo[eid]:
 							if (npos == sender):
 								father[eid] = (npos, naddr)
@@ -158,7 +173,7 @@ def main(mcast_addr,
 						echo[eid].remove(father[eid])
 					else:
 						frw = message_encode(MSG_ECHO_REPLY, seq, initiator, sensor_pos, \
-																	op, payload)
+																	OP_NOOP)
 						for (npos, naddr) in neighbours:
 							if (npos == sender):
 								peer.sendto(frw, naddr)
@@ -173,6 +188,9 @@ def main(mcast_addr,
 								gotfrom = (npos, naddr)
 							#end if sender
 						#end for echo neighbours
+						if (op == echoop[eid]):
+							echoload[eid].append(payload)
+						#end if op match
 						echo[eid].remove(gotfrom)
 					#end if echo exists
 				else:
@@ -182,19 +200,54 @@ def main(mcast_addr,
 			#end if len
 		#end for r
 		
+		finished = set()
 		for (eid, pending) in echo.iteritems():
 			if (len(pending) == 0):
-				if (eid not in father):
-					window.writeln("Echo complete.")
+				op = echoop[eid]
+				if (op == OP_NOOP or op == OP_SIZE):
+					echoload[eid].append(1)
+				elif (op == OP_SUM or op == OP_MIN or op == OP_MAX):
+					echoload[eid].append(sensor_val)
+				#end switch op
+				
+				if (op == OP_SIZE or op == OP_SUM):
+					load = sum(echoload[eid])
+				elif (op == OP_MIN):
+					load = min(echoload[eid])
+				elif (op == OP_MAX):
+					load = max(echoload[eid])
 				else:
-					(fpos, faddr) = father[eid]
+					load = 0
+				#end switch op
+				
+				finished.add(eid)
+				(fpos, faddr) = father[eid]
+				if (faddr is None):
+					if (op == OP_SIZE):
+						window.writeln("Cluster size: " + str(load))
+					elif (op == OP_SUM):
+						window.writeln("Sum of sensor values in cluster: " + str(load))
+					elif (op == OP_MIN):
+						window.writeln("Minimum of sensor values in cluster: " + str(load))
+					elif (op == OP_MAX):
+						window.writeln("Maximum of sensor values in cluster: " + str(load))
+					else:
+						window.writeln("Echo complete.")
+					#end switch op
+				else:
 					(initiator, seq) = eid
 					msg = message_encode(MSG_ECHO_REPLY, seq, initiator, sensor_pos, \
-															op, payload) 
+															op, load) 
 					peer.sendto(msg, faddr)
 				#end if self father
 			#end if echo empty
 		#end for echos
+		for eid in finished:
+			del echo[eid]
+			del father[eid]
+			del echoop[eid]
+			del echoload[eid]
+		#end for finished
 		
 	#end while update
 	return
