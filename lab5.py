@@ -9,7 +9,6 @@ from socket import *
 from random import randint
 from gui import MainWindow
 from sensor import *
-from sets import Set
 
 # Get random position in NxN grid.
 def random_position(n):
@@ -66,8 +65,16 @@ def main(mcast_addr,
 	# Periodic pinging.
 	lastpingtime = -1
 	
-	# The list of neighbours.
-	neighbours = Set()
+	# The set of neighbours; (position, address).
+	neighbours = set()
+	
+	# Echo sequence number.
+	echoseq = -1;
+	
+	# The dictionary of fathers of currently active echo's; (position, address).
+	father = {}
+	# The dictionary of sets of neighbours of currently active echo's.
+	echo = {}
 
 	# -- This is the event loop. --
 	while window.update():
@@ -91,7 +98,13 @@ def main(mcast_addr,
 				sensor_val = randint(0, 100)
 				window.writeln( 'my sensor value is %s' % sensor_val )
 			elif (line == "echo"):
-				window.writeln("(not yet implemented)")
+				echoseq += 1;
+				eid = (sensor_pos, echoseq)
+				echo[eid] = neighbours.copy()
+				msg = message_encode(MSG_ECHO, echoseq, sensor_pos, sensor_pos, OP_NOOP)
+				for (npos, naddr) in neighbours:
+					peer.sendto(msg, naddr)
+				#end for neighbours
 			elif (line == "size"):
 				window.writeln("(not yet implemented)")
 			elif (line == "sum"):
@@ -116,6 +129,7 @@ def main(mcast_addr,
 		rrdy, wrdy, err = select.select([mcast, peer], [], [], 0)
 		for r in rrdy:
 			(msg, addr) = r.recvfrom(message_length)
+			
 			if (len(msg) > 0):
 				content = message_decode(msg)
 				tp, seq, initiator, sender, op, payload = content
@@ -129,15 +143,58 @@ def main(mcast_addr,
 						neighbours.add((initiator, addr))
 					#end if inrange
 				elif (tp == MSG_ECHO):
-					pass
+					eid = (initiator, seq)
+					if (eid not in echo):
+						echo[eid] = neighbours.copy()
+						frw = message_encode(MSG_ECHO, seq, initiator, sensor_pos, \
+																	op, payload) 
+						for (npos, naddr) in echo[eid]:
+							if (npos == sender):
+								father[eid] = (npos, naddr)
+							else:
+								peer.sendto(frw, naddr)
+							#end if sender
+						#end for echo neighbours
+						echo[eid].remove(father[eid])
+					else:
+						frw = message_encode(MSG_ECHO_REPLY, seq, initiator, sensor_pos, \
+																	op, payload)
+						for (npos, naddr) in neighbours:
+							if (npos == sender):
+								peer.sendto(frw, naddr)
+							#end if sender
+						#end for neighbours
+					#end if new echo
 				elif (tp == MSG_ECHO_REPLY):
-					pass
+					eid = (initiator, seq)
+					if (eid in echo):
+						for (npos, naddr) in echo[eid]:
+							if (npos == sender):
+								gotfrom = (npos, naddr)
+							#end if sender
+						#end for echo neighbours
+						echo[eid].remove(gotfrom)
+					#end if echo exists
 				else:
 					window.writeln("{ unknown message type " + str(tp) + " }")
 				#end switch tp
 				window.writeln("< " + str(addr) + ": " + str(content))
 			#end if len
 		#end for r
+		
+		for (eid, pending) in echo.iteritems():
+			if (len(pending) == 0):
+				if (eid not in father):
+					window.writeln("Echo complete.")
+				else:
+					(fpos, faddr) = father[eid]
+					(initiator, seq) = eid
+					msg = message_encode(MSG_ECHO_REPLY, seq, initiator, sensor_pos, \
+															op, payload) 
+					peer.sendto(msg, faddr)
+				#end if self father
+			#end if echo empty
+		#end for echos
 		
 	#end while update
 	return
